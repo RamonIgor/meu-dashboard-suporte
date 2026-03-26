@@ -4,160 +4,148 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="Dashboard Suporte Profissional", layout="wide")
+st.set_page_config(page_title="Performance Analytics - Suporte", layout="wide")
 
-# 2. CSS PARA REPLICAR O VISUAL DA IMAGEM
+# 2. CSS PARA ESTILO CORPORATIVO (TEAL & WHITE)
 st.markdown("""
     <style>
-    /* Fundo da aplicação */
-    [data-testid="stAppViewContainer"] {
-        background-color: #e5eaf3;
-    }
+    [data-testid="stAppViewContainer"] { background-color: #f0f2f6; }
+    [data-testid="stSidebar"] { background-color: #0083b0; }
+    [data-testid="stSidebar"] * { color: white !important; }
     
-    /* Barra Lateral Azul Petróleo */
-    [data-testid="stSidebar"] {
-        background-color: #0083b0;
-    }
-    [data-testid="stSidebar"] * {
-        color: white !important;
-    }
-    
-    /* Estilização dos Cards de KPI */
     .stMetric {
         background-color: white;
-        padding: 15px !important;
-        border-radius: 5px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-        border-top: 4px solid #0097a7;
+        padding: 20px !important;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        border-top: 5px solid #0097a7;
     }
-    
-    /* Títulos dos Gráficos */
-    .chart-title {
-        font-weight: bold;
-        color: #333;
-        margin-bottom: 10px;
-        text-transform: uppercase;
-        font-size: 14px;
-    }
-
-    /* Container dos Gráficos */
     .white-card {
         background-color: white;
         padding: 20px;
-        border-radius: 5px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
+    }
+    .chart-title {
+        font-weight: bold; color: #333; margin-bottom: 15px; text-transform: uppercase; font-size: 13px; letter-spacing: 1px;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- SIDEBAR (FILTROS) ---
+# --- INICIALIZAÇÃO DO BANCO DE DADOS EM MEMÓRIA ---
+if 'db' not in st.session_state:
+    st.session_state.db = pd.DataFrame()
+
+# --- SIDEBAR (UPLOAD E FILTROS) ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=80) # Logo genérico
-    st.markdown("## DASHBOARD PERFORMANCE")
-    uploaded_file = st.file_uploader("📂 Importar CSV", type="csv")
+    st.markdown("## 📊 GESTÃO DE DADOS")
     
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        # Tratamento de datas
-        for col in df.columns:
-            if 'data' in col.lower() or 'date' in col.lower():
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-        
-        data_col = [col for col in df.columns if 'data' in col.lower()][0]
-        df['Ano'] = df[data_col].dt.year
-        df['Mes_Nome'] = df[data_col].dt.strftime('%b')
-        
-        ano_sel = st.selectbox("Ano", sorted(df['Ano'].unique(), reverse=True))
-        
-        col_analista = [col for col in df.columns if 'analista' in col.lower() or 'responsavel' in col.lower()][0]
-        analista_sel = st.selectbox("Analista", df[col_analista].unique())
-        
-        # Filtro final
-        df_f = df[(df['Ano'] == ano_sel) & (df[col_analista] == analista_sel)]
+    # Seleção de período para o arquivo que será subido
+    st.markdown("### 1. Definir Período do Arquivo")
+    input_mes = st.selectbox("Mês do Relatório", ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"])
+    input_ano = st.selectbox("Ano do Relatório", [2023, 2024, 2025])
+    
+    uploaded_files = st.file_uploader("2. Subir CSV(s)", type="csv", accept_multiple_files=True)
+    
+    if st.button("🚀 Processar e Consolidar"):
+        if uploaded_files:
+            temp_list = []
+            for file in uploaded_files:
+                df_temp = pd.read_csv(file, sep=None, engine='python')
+                # Adiciona as colunas de data que não existem no CSV
+                df_temp['Mes'] = input_mes
+                df_temp['Ano'] = input_ano
+                df_temp['Periodo_Ord'] = f"{input_ano}-{str(['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].index(input_mes)+1).zfill(2)}"
+                temp_list.append(df_temp)
+            
+            st.session_state.db = pd.concat([st.session_state.db, pd.concat(temp_list)]).drop_duplicates()
+            st.success("Dados consolidados!")
 
-# --- ÁREA PRINCIPAL ---
-if uploaded_file:
-    st.markdown(f"<h2 style='text-align: center; color: #333;'>DESEMPENHO INDIVIDUAL - {analista_sel.upper()}</h2>", unsafe_allow_html=True)
+    if not st.session_state.db.empty:
+        st.markdown("---")
+        st.markdown("### 🔍 FILTROS GERAIS")
+        # Filtro de Analista (Cedente)
+        lista_analistas = sorted(st.session_state.db['Nome do cedente'].unique())
+        analista_sel = st.selectbox("Selecionar Colaborador", lista_analistas)
+        
+        # Filtro de Ano para o Dashboard
+        anos_disp = sorted(st.session_state.db['Ano'].unique(), reverse=True)
+        ano_dashboard = st.multiselect("Anos no Gráfico", anos_disp, default=anos_disp)
+
+# --- DASHBOARD PRINCIPAL ---
+if not st.session_state.db.empty:
+    # Filtrando a base para o analista e anos selecionados
+    df_f = st.session_state.db[(st.session_state.db['Nome do cedente'] == analista_sel) & (st.session_state.db['Ano'].isin(ano_dashboard))]
+    df_f = df_f.sort_values('Periodo_Ord')
+
+    st.markdown(f"<h2 style='color: #1E3A8A; margin-bottom:20px;'>Performance Individual: {analista_sel}</h2>", unsafe_allow_html=True)
+
+    # LINHA 1: MÉTRICAS (KPIs)
+    k1, k2, k3, k4, k5 = st.columns(5)
     
-    # LINHA 1: KPIs (Cards Brancos)
-    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-    
-    with kpi1:
-        st.metric("Total Chamados", len(df_f))
-    with kpi2:
-        sla_col = [col for col in df.columns if 'sla' in col.lower()][0]
-        sla_val = (df_f[sla_col].astype(str).str.contains('Sim|Dentro|1|True', case=False).sum() / len(df_f)) * 100 if len(df_f)>0 else 0
-        st.metric("SLA Cumprido", f"{sla_val:.1f}%")
-    with kpi3:
-        csat_col = [col for col in df.columns if 'satisfacao' in col.lower() or 'csat' in col.lower()][0]
-        st.metric("CSAT Médio", f"{df_f[csat_col].mean():.2f}")
-    with kpi4:
-        st.metric("Meta Atingida", "98.5%")
-    with kpi5:
-        st.metric("Pontuação", "4.8/5")
+    # Pegando o dado do último mês disponível para os cards
+    last_month = df_f.iloc[-1] if not df_f.empty else None
+
+    with k1:
+        val = last_month['Resolvidos/Fechados'] if last_month is not None else 0
+        st.metric("Resolvidos/Fechados", val)
+    with k2:
+        val = last_month['% FCR'] if last_month is not None else "0%"
+        st.metric("FCR (1º Contato)", val)
+    with k3:
+        val = last_month['% Pontuação de Satisfação'] if last_month is not None else "0%"
+        st.metric("Satisfação", val)
+    with k4:
+        val = last_month['Média Interações'] if last_month is not None else 0
+        st.metric("Média Interações", val)
+    with k5:
+        st.metric("Status Mérito", "Destaque")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # LINHA 2: GRÁFICOS DE LINHA E BARRA
-    col_graph1, col_graph2 = st.columns(2)
-    
-    with col_graph1:
-        st.markdown('<div class="white-card"><p class="chart-title">Volume por Ano</p>', unsafe_allow_html=True)
-        # Agrupamento por ano para o gráfico de barras
-        df_ano = df[df[col_analista] == analista_sel].groupby('Ano').size().reset_index(name='Total')
-        fig_ano = px.bar(df_ano, x='Ano', y='Total', text_auto=True)
-        fig_ano.update_traces(marker_color='#0097a7')
-        fig_ano.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig_ano, use_container_width=True)
+    # LINHA 2: GRÁFICO DE EVOLUÇÃO (A Métrica mais importante)
+    st.markdown('<div class="white-card"><p class="chart-title">Evolução: Resolvidos/Fechados por Mês</p>', unsafe_allow_html=True)
+    fig_evol = px.bar(df_f, x='Mes', y='Resolvidos/Fechados', color_discrete_sequence=['#0097a7'], text_auto=True)
+    fig_evol.update_layout(height=350, margin=dict(l=20, r=20, t=10, b=10), plot_bgcolor='rgba(0,0,0,0)', xaxis_title=None)
+    st.plotly_chart(fig_evol, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # LINHA 3: QUALIDADE E EFICIÊNCIA
+    c_left, c_right = st.columns(2)
+
+    with c_left:
+        st.markdown('<div class="white-card"><p class="chart-title">Qualidade: FCR vs Satisfação</p>', unsafe_allow_html=True)
+        # Limpeza simples de strings de porcentagem para números se necessário
+        fig_qual = go.Figure()
+        fig_qual.add_trace(go.Scatter(x=df_f['Mes'], y=df_f['% FCR'], name='% FCR', line=dict(color='#0083b0', width=3)))
+        fig_qual.add_trace(go.Scatter(x=df_f['Mes'], y=df_f['% Pontuação de Satisfação'], name='% Satisfação', line=dict(color='#F59E0B', width=3)))
+        fig_qual.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(fig_qual, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    with col_graph2:
-        st.markdown('<div class="white-card"><p class="chart-title">Volume Mensal (Sazonalidade)</p>', unsafe_allow_html=True)
-        df_mes = df_f.groupby('Mes_Nome').size().reset_index(name='Total')
-        fig_mes = px.line(df_mes, x='Mes_Nome', y='Total', markers=True)
-        fig_mes.update_traces(line_color='#0097a7', marker=dict(size=10, bordercolor="white", borderwidth=2))
-        fig_mes.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig_mes, use_container_width=True)
+    with c_right:
+        st.markdown('<div class="white-card"><p class="chart-title">Espera do Solicitante (Horas)</p>', unsafe_allow_html=True)
+        # Tratamento do nome longo da coluna
+        col_espera = 'Tempo de espera do solicitante - Horário de funcionamento (horas)'
+        fig_wait = px.area(df_f, x='Mes', y=col_espera, color_discrete_sequence=['#94A3B8'])
+        fig_wait.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_wait, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # LINHA 3: TOP CATEGORIAS E DONUT
-    col_cat, col_cli, col_pizza = st.columns([4, 4, 3])
-
-    with col_cat:
-        st.markdown('<div class="white-card"><p class="chart-title">Top Categorias</p>', unsafe_allow_html=True)
-        cat_col = [col for col in df.columns if 'categoria' in col.lower()][0]
-        df_cat = df_f[cat_col].value_counts().head(5).reset_index()
-        fig_cat = px.bar(df_cat, x='count', y=cat_col, orientation='h', text_auto=True)
-        fig_cat.update_traces(marker_color='#0097a7')
-        fig_cat.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_title=None)
-        st.plotly_chart(fig_cat, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_cli:
-        st.markdown('<div class="white-card"><p class="chart-title">Top Clientes Atendidos</p>', unsafe_allow_html=True)
-        # Simulando coluna de cliente se não houver
-        cli_col = [col for col in df.columns if 'cliente' in col.lower() or 'empresa' in col.lower()][0]
-        df_cli = df_f[cli_col].value_counts().head(5).reset_index()
-        fig_cli = px.bar(df_cli, x='count', y=cli_col, orientation='h', text_auto=True)
-        fig_cli.update_traces(marker_color='#0083b0')
-        fig_cli.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_title=None)
-        st.plotly_chart(fig_cli, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_pizza:
-        st.markdown('<div class="white-card"><p class="chart-title">Distribuição SLA</p>', unsafe_allow_html=True)
-        fig_pizza = px.pie(df_f, names=sla_col, hole=0.6, color_discrete_sequence=['#0097a7', '#cfd8dc'])
-        fig_pizza.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), showlegend=False)
-        fig_pizza.update_traces(textinfo='percent+label')
-        st.plotly_chart(fig_pizza, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # TABELA DE DADOS BRUTOS CONSOLIDADOS
+    with st.expander("📄 Visualizar Tabela Consolidada de Mérito"):
+        st.dataframe(df_f, use_container_width=True)
 
 else:
+    # TELA DE BOAS VINDAS
     st.markdown("""
-        <div style="text-align: center; padding: 150px;">
-            <h1 style='color: #0083b0;'>Bem-vindo à sua Central de Mérito</h1>
-            <p style='color: #666;'>Importe o arquivo CSV extraído do sistema para gerar sua apresentação profissional.</p>
+        <div style="text-align: center; padding: 100px;">
+            <h1 style='color: #0083b0;'>Sua Vitrine Profissional</h1>
+            <p style='color: #666; font-size: 1.2rem;'>
+                1. Selecione o <b>Mês/Ano</b> na barra lateral.<br>
+                2. Suba o arquivo CSV correspondente.<br>
+                3. Clique em <b>Processar</b> para construir seu histórico de conquistas.
+            </p>
         </div>
     """, unsafe_allow_html=True)
